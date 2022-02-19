@@ -237,6 +237,9 @@ sites_bray <- vegdist(sites, method="bray")
 sites_bray
 ```
 
+**Question**: Bray Curtis distance is a measure between 0 and 1 (0 = identical, 1 = most different), whereas Euclidean distance is the hypotenuse. Bray Curtis distance is a better measure of species dissimilarity vs. Euclidean distance.
+
+
 ```{r}
 # Dissimilarity matrix
 d <- vegdist(dune, method="bray")
@@ -255,6 +258,9 @@ hc1 <- hclust(d, method = "complete" )
 plot(hc1, cex = 0.6, hang = -1)
 ```
 
+**Question**: First, the the dissimilarity values are calculated with `vegdist()` (here we use Bray Curtis dissimilarity). Next, these values are the input of `hclust()`, using the "complete" agglomeration method. We use `vegdist()` first because this function does the actual computing of the dissimilarity indices, while the `hclust()` executes a hierarchical cluster analysis on this set of given dissimilarities.
+
+
 ```{r}
 # Compute agglomerative clustering with agnes
 hc2 <- agnes(dune, method = "complete")
@@ -267,6 +273,11 @@ hc2$ac
 # Dendrogram plot of hc2
 plot(hc2, which.plot = 2)
 ```
+
+**Question**: `hclust()` = hierarchical clustering, `agnes()` = agglomerative nesting
+
+When the mean method of calculating the distance between observations and clusters is used, `hclust()` only uses the two observations and/or clusters which were recently merged when updating the distance matrix, while `agnes()` calculates those distances as the average of all the distances between all the observations in the two clusters.
+
 
 ```{r}
 # methods to assess
@@ -282,6 +293,9 @@ ac <- function(x) {
 purrr::map_dbl(m, ac)
 ```
 
+**Question**: Of the 4 methods, `ward` is the “best” model because the Agglomerative Coefficient is closest to 1 (~0.69).
+
+
 ```{r}
 # Compute ward linkage clustering with agnes
 hc3 <- agnes(dune, method = "ward")
@@ -295,6 +309,8 @@ hc3$ac
 plot(hc3, which.plot = 2)
 ```
 
+
+
 ```{r}
 # compute divisive hierarchical clustering
 hc4 <- diana(dune)
@@ -302,6 +318,9 @@ hc4 <- diana(dune)
 # Divise coefficient; amount of clustering structure found
 hc4$dc
 ```
+
+**Question**: `agnes()` = agglomerative clustering, bottom-up, starts with each observation in its own cluster; `diana()` = divisive hierarchical clustering, top-down, starts with one big cluster.
+
 
 ```{r}
 librarian::shelf(factoextra)
@@ -319,6 +338,9 @@ p3 <- fviz_nbclust(dune, FUN = hcut, method = "gap_stat", k.max = 10) +
 # Display plots side by side
 gridExtra::grid.arrange(p1, p2, p3, nrow = 1)
 ```
+
+**Question**: The silhouette method has a higher optimal number of clusters (4) compared with the Gap Statistic method (3 clusters).
+
 
 ```{r}
 # Construct dendorgram for the Ames housing example
@@ -351,5 +373,274 @@ fviz_dend(
   rect_fill = TRUE,
   rect_border = "jco",
   k_colors = "jco")
+```
+
+**Question**: In dendrogram plots, the height of their shared connection (shown directly above on the x-axis) is the biggest determinant of relatedness between observations.
+
+
+# Ordination
+
+## Principal Components Analysis (PCA)
+
+```{r}
+# load R packages
+librarian::shelf(
+  dplyr, ggplot2, h2o)
+
+# set seed for reproducible results
+set.seed(42)
+
+# get data
+url <- "https://koalaverse.github.io/homlr/data/my_basket.csv"
+my_basket <- readr::read_csv(url)
+dim(my_basket)
+```
+
+```{r}
+my_basket
+```
+
+
+```{r}
+h2o.no_progress()  # turn off progress bars for brevity
+h2o.init(max_mem_size = "5g")  # connect to H2O instance
+```
+
+```{r}
+# convert data to h2o object
+my_basket.h2o <- as.h2o(my_basket)
+
+# run PCA
+my_pca <- h2o.prcomp(
+  training_frame = my_basket.h2o,
+  pca_method = "GramSVD",
+  k = ncol(my_basket.h2o), 
+  transform = "STANDARDIZE", 
+  impute_missing = TRUE,
+  max_runtime_secs = 1000)
+my_pca
+```
+
+
+**Question**: The `pca_method` of "GramSVD" is chosen because this data is mostly numerical. If the data contained categorical variables, "GLRM" should be used.
+
+
+**Question**: There are `r ncol(my_basket.h2o)` columns, and therefore the same number of initial principal components (42).
+
+
+```{r}
+my_pca@model$model_summary %>% 
+  add_rownames() %>% 
+  tidyr::pivot_longer(-rowname) %>% 
+  filter(
+    rowname == "Proportion of Variance") %>% 
+  mutate(
+    pc = stringr::str_replace(name, "pc", "") %>% as.integer()) %>% 
+  ggplot(aes(x = pc, y=cumsum(value))) +
+  geom_point() + geom_line() +
+  theme(axis.text.x = element_text(angle=90, hjust = 1))  +
+  ylab("Cumulative Proportion of Variance Explained")
+```
+
+```{r}
+my_pca@model$eigenvectors %>% 
+  as.data.frame() %>% 
+  mutate(feature = row.names(.)) %>%
+  ggplot(aes(pc1, reorder(feature, pc1))) +
+  geom_point()
+```
+
+
+**Question**: Beer and wine contributed most to PC1.
+
+
+```{r}
+my_pca@model$eigenvectors %>% 
+  as.data.frame() %>% 
+  mutate(feature = row.names(.)) %>%
+  ggplot(aes(pc1, pc2, label = feature)) +
+  geom_text()
+```
+
+
+**Question**: Vegetables contributed the least to PC1 but positively towards PC2.
+
+
+
+```{r}
+# Compute eigenvalues
+eigen <- my_pca@model$importance["Standard deviation", ] %>%
+  as.vector() %>%
+  .^2
+  
+# Sum of all eigenvalues equals number of variables
+sum(eigen)
+```
+
+```{r}
+## [1] 42
+
+# Find PCs where the sum of eigenvalues is greater than or equal to 1
+which(eigen >= 1)
+```
+
+```{r}
+# Extract PVE and CVE
+ve <- data.frame(
+  PC  = my_pca@model$importance %>% seq_along(),
+  PVE = my_pca@model$importance %>% .[2,] %>% unlist(),
+  CVE = my_pca@model$importance %>% .[3,] %>% unlist())
+
+# Plot PVE and CVE
+ve %>%
+  tidyr::gather(metric, variance_explained, -PC) %>%
+  ggplot(aes(PC, variance_explained)) +
+  geom_point() +
+  facet_wrap(~ metric, ncol = 1, scales = "free")
+```
+
+```{r}
+# How many PCs required to explain at least 75% of total variability
+min(which(ve$CVE >= 0.75))
+```
+
+**Question**: In order to explain 90% of the total variance, `r min(which(ve$CVE >= 0.90))` principal components should be included.
+
+
+```{r}
+# Scree plot criterion
+data.frame(
+  PC  = my_pca@model$importance %>% seq_along,
+  PVE = my_pca@model$importance %>% .[2,] %>% unlist()) %>%
+  ggplot(aes(PC, PVE, group = 1, label = PC)) +
+  geom_point() +
+  geom_line() +
+  geom_text(nudge_y = -.002)
+```
+
+
+**Question**: There are 7 principal components to include up to the elbow of the PVE.
+
+
+**Question**: Disadvantages of PCA include
+(1) PCA can be highly affected by outliers and
+(2) PCA does not perform as well in very high dimensional space where complex nonlinear patterns often exist.
+
+
+## Non-metric MultiDimensional Scaling (NMDS)
+ 
+```{r}
+# load R packages
+librarian::shelf(
+  vegan, vegan3d)
+
+# vegetation and environment in lichen pastures from Vare et al (1995)
+data("varespec") # species
+data("varechem") # chemistry
+
+if (interactive()){
+  help(varechem)
+  help(varespec)
+}
+
+varespec %>% tibble()
+```
+
+**Question**: The `varespec`data frame has `r nrow(varespec)` rows (sites) and `r ncol(varespec)` columns (species).
+
+
+
+```{r}
+vare.dis <- vegdist(varespec)
+vare.mds0 <- monoMDS(vare.dis)
+stressplot(vare.mds0)
+```
+
+**Question**: The NMDS fit has an R^2 of 0.971, which is higher than the R^2 value for the linear fit (0.84) by about 0.07 (7%).
+
+
+```{r}
+ordiplot(vare.mds0, type = "t")
+```
+
+
+**Question**: Sites 5 and 8 are  most dissimilar based on species composition for the first component (MDS1). Sites 9/14 and 21 are most dissimilar based on MDS2.
+
+
+```{r}
+vare.mds <- metaMDS(varespec, trace = FALSE)
+vare.mds
+```
+
+
+```{r}
+plot(vare.mds, type = "t")
+```
+
+
+**Question**: The `monoMDS` function runs NMDS by finding two dimensions and using random configuration as the starting solution. The solution iterates and the result is a long list including the final configuration and the stress statistic. The `metaMDS` function uses several random starts and selects among similar solutions with smallest stresses. Additionally, the result of `metaMDS` is more complicated and has more components.
+
+
+```{r}
+ef <- envfit(vare.mds, varechem, permu = 999)
+ef
+```
+
+
+```{r}
+plot(vare.mds, display = "sites")
+plot(ef, p.max = 0.05)
+```
+
+
+**Question**: Aluminum (Al) and iron (Fe) have the strongest negative relationship with NMDS1 based on species composition.
+
+
+
+```{r}
+ef <- envfit(vare.mds ~ Al + Ca, data = varechem)
+plot(vare.mds, display = "sites")
+plot(ef)
+
+tmp <- with(varechem, ordisurf(vare.mds, Al, add = TRUE))
+ordisurf(vare.mds ~ Ca
+         
+         , data=varechem, add = TRUE, col = "green4")
+```
+
+**Question**: The highest values of Ca are found in the upper middle (NMDS1~0, NMDS2>0) and lower right (NMDS1>0, NMDS2<0); and the lowest values of Ca are found in the bottom left of the graph (NMDS1<0, NMDS2<0).  
+
+
+```{r}
+# ordinate on species constrained by three soil elements
+vare.cca <- cca(varespec ~ Al + P + K, varechem)
+vare.cca
+```
+
+
+**Question**: Within an ecological context, "constrained" ordination is determined by species and other environmental variables and "unconstrained" ordination is determined by species only ("unconstrained" by the environment).
+
+
+
+```{r}
+# plot ordination
+plot(vare.cca)
+```
+
+
+**Question**: Sites 28 and 4 are most differentiated by CCA1. Aluminum (Al) is the strongest environmental vector for CCA1.
+
+
+
+```{r}
+# plot 3 dimensions
+ordiplot3d(vare.cca, type = "h")
+```
+
+
+```{r}
+if (interactive()){
+  ordirgl(vare.cca)
+}
 ```
 
